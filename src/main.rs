@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io};
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -26,7 +29,7 @@ enum ExtraFields {
     BroadcastOk,
     Read,
     ReadOk {
-        messages: Vec<usize>,
+        messages: HashSet<usize>,
     },
     Topology {
         topology: HashMap<String, Vec<String>>,
@@ -67,7 +70,7 @@ impl MsgIdGen {
 struct NodeData {
     node_id: Option<String>,
     node_ids: Option<Vec<String>>,
-    messages: Vec<usize>,
+    messages: HashSet<usize>,
     topology: Option<HashMap<String, Vec<String>>>,
 }
 
@@ -76,7 +79,7 @@ impl NodeData {
         Self {
             node_id: None,
             node_ids: None,
-            messages: Vec::new(),
+            messages: HashSet::new(),
             topology: None,
         }
     }
@@ -113,11 +116,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let msg_id = msg_id_gen.gen();
 
         let ok_extra: Option<ExtraFields> = match in_msg.body.extra {
-            ExtraFields::Init {
-                node_id,
-                node_ids: _,
-            } => {
+            ExtraFields::Init { node_id, node_ids } => {
                 node_data.node_id = Some(node_id);
+                node_data.node_ids = Some(node_ids);
                 Some(ExtraFields::InitOk)
             }
             ExtraFields::InitOk => None,
@@ -132,19 +133,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
             ExtraFields::GenerateOk { id: _ } => None,
             ExtraFields::Broadcast { message } => {
-                node_data.messages.push(message);
-                if let Some(neighbours) = node_data.get_neighbours() {
-                    for neighbour in neighbours {
-                        let fwd_msg = Msg {
-                            src: node_data.node_id.clone().unwrap(),
-                            dst: neighbour,
-                            body: MsgBody {
-                                msg_id: msg_id_gen.gen(),
-                                in_reply_to: None,
-                                extra: ExtraFields::Broadcast { message },
-                            },
-                        };
-                        println!("{}", serde_json::to_string(&fwd_msg)?);
+                let is_new = node_data.messages.insert(message);
+                if is_new {
+                    if let Some(neighbours) = node_data.get_neighbours() {
+                        for neighbour in neighbours {
+                            let fwd_msg = Msg {
+                                src: node_data.node_id.clone().unwrap(),
+                                dst: neighbour,
+                                body: MsgBody {
+                                    msg_id: msg_id_gen.gen(),
+                                    in_reply_to: None,
+                                    extra: ExtraFields::Broadcast { message },
+                                },
+                            };
+                            println!("{}", serde_json::to_string(&fwd_msg)?);
+                        }
                     }
                 }
                 Some(ExtraFields::BroadcastOk)
