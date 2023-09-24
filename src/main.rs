@@ -33,12 +33,25 @@ struct Msg {
     body: MsgBody,
 }
 
+struct MsgIdGen(usize);
+
+impl MsgIdGen {
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn gen(&mut self) -> usize {
+        self.0 += 1;
+        self.0
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let in_handle = stdin.lock();
     let mut de = serde_json::Deserializer::from_reader(in_handle);
 
-    let mut curr_id = 1;
+    let mut msg_id_gen = MsgIdGen::new();
 
     loop {
         eprintln!("pre des");
@@ -51,11 +64,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 node_id: _,
                 node_ids: _,
             } => MsgBody::InitOk {
-                msg_id: curr_id,
+                msg_id: msg_id_gen.gen(),
                 in_reply_to: msg_id,
             },
             MsgBody::Echo { msg_id, echo } => MsgBody::EchoOk {
-                msg_id: curr_id,
+                msg_id: msg_id_gen.gen(),
                 in_reply_to: msg_id,
                 echo,
             },
@@ -67,8 +80,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             body: out_body,
         };
         eprintln!("reply constructed");
-
-        curr_id += 1;
 
         println!("{}", serde_json::to_string(&out_msg)?);
 
