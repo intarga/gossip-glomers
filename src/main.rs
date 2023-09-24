@@ -35,6 +35,10 @@ enum ExtraFields {
         topology: HashMap<String, Vec<String>>,
     },
     TopologyOk,
+    GossipBroadcast {
+        new_message: usize,
+        all_messages: HashSet<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,24 +58,12 @@ struct Msg {
     body: MsgBody,
 }
 
-struct MsgIdGen(usize);
-
-impl MsgIdGen {
-    pub fn new() -> Self {
-        Self(0)
-    }
-
-    pub fn gen(&mut self) -> usize {
-        self.0 += 1;
-        self.0
-    }
-}
-
 struct NodeData {
     node_id: Option<String>,
     node_ids: Option<Vec<String>>,
     messages: HashSet<usize>,
     topology: Option<HashMap<String, Vec<String>>>,
+    curr_msg_id: usize,
 }
 
 impl NodeData {
@@ -81,7 +73,13 @@ impl NodeData {
             node_ids: None,
             messages: HashSet::new(),
             topology: None,
+            curr_msg_id: 0,
         }
+    }
+
+    pub fn next_msg_id(&mut self) -> usize {
+        self.curr_msg_id += 1;
+        self.curr_msg_id
     }
 
     fn neighbours_from_topology(&self) -> Option<Vec<String>> {
@@ -101,6 +99,37 @@ impl NodeData {
     }
 }
 
+fn gossip(
+    node_data: &mut NodeData,
+    new_message: usize,
+    all_messages: HashSet<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let is_new = node_data.messages.insert(new_message);
+    if is_new {
+        node_data
+            .messages
+            .extend(all_messages.difference(&node_data.messages.clone()));
+        if let Some(neighbours) = node_data.get_neighbours() {
+            for neighbour in neighbours {
+                let fwd_msg = Msg {
+                    src: node_data.node_id.clone().unwrap(),
+                    dst: neighbour,
+                    body: MsgBody {
+                        msg_id: node_data.next_msg_id(),
+                        in_reply_to: None,
+                        extra: ExtraFields::GossipBroadcast {
+                            new_message,
+                            all_messages: node_data.messages.clone(),
+                        },
+                    },
+                };
+                println!("{}", serde_json::to_string(&fwd_msg)?);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let in_handle = stdin.lock();
@@ -108,12 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut node_data = NodeData::new();
 
-    let mut msg_id_gen = MsgIdGen::new();
-
     loop {
         let in_msg = Msg::deserialize(&mut de)?;
-
-        let msg_id = msg_id_gen.gen();
 
         let ok_extra: Option<ExtraFields> = match in_msg.body.extra {
             ExtraFields::Init { node_id, node_ids } => {
@@ -128,28 +153,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 id: format!(
                     "{}-{}",
                     node_data.node_id.clone().unwrap_or_default(),
-                    msg_id
+                    node_data.curr_msg_id,
                 ),
             }),
             ExtraFields::GenerateOk { id: _ } => None,
             ExtraFields::Broadcast { message } => {
-                let is_new = node_data.messages.insert(message);
-                if is_new {
-                    if let Some(neighbours) = node_data.get_neighbours() {
-                        for neighbour in neighbours {
-                            let fwd_msg = Msg {
-                                src: node_data.node_id.clone().unwrap(),
-                                dst: neighbour,
-                                body: MsgBody {
-                                    msg_id: msg_id_gen.gen(),
-                                    in_reply_to: None,
-                                    extra: ExtraFields::Broadcast { message },
-                                },
-                            };
-                            println!("{}", serde_json::to_string(&fwd_msg)?);
-                        }
-                    }
-                }
+                gossip(&mut node_data, message, HashSet::new())?;
                 Some(ExtraFields::BroadcastOk)
             }
             ExtraFields::BroadcastOk => None,
@@ -162,9 +171,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(ExtraFields::TopologyOk)
             }
             ExtraFields::TopologyOk => None,
+            ExtraFields::GossipBroadcast {
+                new_message,
+                all_messages,
+            } => {
+                gossip(&mut node_data, new_message, all_messages)?;
+                None
+            }
         };
 
         if let Some(inner) = ok_extra {
+            let msg_id = node_data.next_msg_id();
             let ok_msg = Msg {
                 src: in_msg.dst,
                 dst: in_msg.src,
