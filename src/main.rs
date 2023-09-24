@@ -16,6 +16,10 @@ enum ExtraFields {
     EchoOk {
         echo: String,
     },
+    Generate,
+    GenerateOk {
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,24 +57,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let in_handle = stdin.lock();
     let mut de = serde_json::Deserializer::from_reader(in_handle);
 
+    let mut curr_node_id: Option<String> = None;
+
     let mut msg_id_gen = MsgIdGen::new();
 
     loop {
         let in_msg = Msg::deserialize(&mut de)?;
 
+        let msg_id = msg_id_gen.gen();
+
         let out_inner = match in_msg.body.extra {
             ExtraFields::Init {
-                node_id: _,
+                node_id,
                 node_ids: _,
-            } => ExtraFields::InitOk,
+            } => {
+                curr_node_id = Some(node_id);
+                ExtraFields::InitOk
+            }
             ExtraFields::Echo { echo } => ExtraFields::EchoOk { echo },
+            ExtraFields::Generate => ExtraFields::GenerateOk {
+                id: format!("{}-{}", curr_node_id.clone().unwrap_or_default(), msg_id),
+            },
             _ => panic!(),
         };
         let out_msg = Msg {
             src: in_msg.dst,
             dst: in_msg.src,
             body: MsgBody {
-                msg_id: msg_id_gen.gen(),
+                msg_id,
                 in_reply_to: Some(in_msg.body.msg_id),
                 extra: out_inner,
             },
