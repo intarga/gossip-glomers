@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::{collections::HashMap, io};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -52,12 +52,28 @@ impl MsgIdGen {
     }
 }
 
+struct NodeData {
+    node_id: Option<String>,
+    node_ids: Option<Vec<String>>,
+    topology: Option<HashMap<String, Vec<String>>>,
+}
+
+impl NodeData {
+    pub fn new() -> Self {
+        Self {
+            node_id: None,
+            node_ids: None,
+            topology: None,
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let in_handle = stdin.lock();
     let mut de = serde_json::Deserializer::from_reader(in_handle);
 
-    let mut curr_node_id: Option<String> = None;
+    let mut NodeData = NodeData::new();
 
     let mut msg_id_gen = MsgIdGen::new();
 
@@ -66,30 +82,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let msg_id = msg_id_gen.gen();
 
-        let out_inner = match in_msg.body.extra {
+        let ok_extra: Option<ExtraFields> = match in_msg.body.extra {
             ExtraFields::Init {
                 node_id,
                 node_ids: _,
             } => {
-                curr_node_id = Some(node_id);
-                ExtraFields::InitOk
+                NodeData.node_id = Some(node_id);
+                Some(ExtraFields::InitOk)
             }
-            ExtraFields::Echo { echo } => ExtraFields::EchoOk { echo },
-            ExtraFields::Generate => ExtraFields::GenerateOk {
-                id: format!("{}-{}", curr_node_id.clone().unwrap_or_default(), msg_id),
-            },
+            ExtraFields::Echo { echo } => Some(ExtraFields::EchoOk { echo }),
+            ExtraFields::Generate => Some(ExtraFields::GenerateOk {
+                id: format!(
+                    "{}-{}",
+                    NodeData.node_id.clone().unwrap_or_default(),
+                    msg_id
+                ),
+            }),
             _ => panic!(),
         };
-        let out_msg = Msg {
-            src: in_msg.dst,
-            dst: in_msg.src,
-            body: MsgBody {
-                msg_id,
-                in_reply_to: Some(in_msg.body.msg_id),
-                extra: out_inner,
-            },
-        };
 
-        println!("{}", serde_json::to_string(&out_msg)?);
+        if let Some(inner) = ok_extra {
+            let ok_msg = Msg {
+                src: in_msg.dst,
+                dst: in_msg.src,
+                body: MsgBody {
+                    msg_id,
+                    in_reply_to: Some(in_msg.body.msg_id),
+                    extra: inner,
+                },
+            };
+
+            println!("{}", serde_json::to_string(&ok_msg)?);
+        }
     }
 }
