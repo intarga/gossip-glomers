@@ -14,6 +14,15 @@ enum MsgBody {
         msg_id: usize,
         in_reply_to: usize,
     },
+    Echo {
+        msg_id: usize,
+        echo: String,
+    },
+    EchoOk {
+        msg_id: usize,
+        in_reply_to: usize,
+        echo: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => MsgBody::InitOk {
                 msg_id: curr_id,
                 in_reply_to: msg_id,
+            },
+            MsgBody::Echo { msg_id, echo } => MsgBody::EchoOk {
+                msg_id: curr_id,
+                in_reply_to: msg_id,
+                echo,
             },
             _ => panic!(),
         };
